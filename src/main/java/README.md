@@ -7,6 +7,6 @@ plan
 +[x] get data from twitter api 
 +[ ] cleanup this process
 +[x] persist data from twitter
-+[ ] use data to create a markov chain
++[X] use data to create a markov chain
 +[ ] persist the model
 +[ ] create an interface to run the program 
