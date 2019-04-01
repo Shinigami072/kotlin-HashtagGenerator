@@ -1,210 +1,106 @@
 package shinigami
 import jp.nephy.jsonkt.*
 import jp.nephy.jsonkt.delegation.*
-import jp.nephy.penicillin.PenicillinClient
-import jp.nephy.penicillin.core.exceptions.PenicillinException
-import jp.nephy.penicillin.core.session.config.account
-import jp.nephy.penicillin.core.session.config.application
-import jp.nephy.penicillin.core.session.config.token
-import jp.nephy.penicillin.endpoints.trends
-import jp.nephy.penicillin.endpoints.trends.availableAreas
-import jp.nephy.penicillin.endpoints.trends.place
-import jp.nephy.penicillin.extensions.RateLimit
-import jp.nephy.penicillin.extensions.await
-import jp.nephy.penicillin.models.TrendArea
 import java.io.File
-import java.lang.Math.random
 import java.util.*
 
-data class HashtagValue(override val json:JsonObject) :JsonModel{
-    val hashtag by string
-    val volume by int
+suspend fun loadFile(updater:DBUpdater): HashtagDB{
+    //try to load tge file
+    val file = File(settings.FILE)
+    val map = mutableMapOf<String,Int>()
 
-}
-
-
-    fun getHashtag(hashtag:String,volume:Int):HashtagValue{
-        return HashtagValue(jsonObjectOf("hashtag" to hashtag,"volume" to volume))
-    }
-
-    fun getHashtagDB(hashtags: Collection<Pair<String, Int>>):HashtagDB{
-        return getHashtagDB(hashtags, Date().time)
-    }
-    fun getHashtagDB(hashtags: Collection<Pair<String, Int>>, date:Long):HashtagDB{
-        var list = hashtags.map{pair-> jsonObjectOf("hashtag" to pair.first,"volume" to pair.second)}.toJsonArray()
-        return HashtagDB(jsonObjectOf("date" to date,"list" to list))
-
-
-    }
-
-data class HashtagDB(override val json:JsonObject) : JsonModel{
-    val hashtags by modelList<HashtagValue>()
-    val date by long
-    //reqiured due to bugged library
-    val hashtag_fix by lazy { json["list"].parseList<HashtagValue>() }
-}
-
-//import khttp.get
-val FILE = "hashtags.json"
-val TIMELIMIT = 10*60*1_000;
-val BASELINE= 5_000
-val PLACELIMIT = 25
-
-
-suspend fun loadFile(): HashtagDB{
-    var file = File(FILE)
-    var map = mutableMapOf<String,Int>()
+    //if file exists and can be read
     if(file.exists() && file.canRead() ){
-        var DB = file.parse<HashtagDB>()
-        if((Date().time-DB.date)<TIMELIMIT){
-            return DB;
+
+        val database = file.parse<HashtagDB>()
+
+        //check if it is recent enough
+        if((Date().time-database.date)<settings.TIMELIMIT){
+            return database;
         }
-        DB.hashtag_fix.forEach{map.put(it.hashtag,it.volume)}
+
+        //make the map
+        database.hashtagFix.forEach{ map[it.hashtag] = it.volume }
     }
-    return updateDB()
-}
 
-suspend fun updateDB( trends:MutableMap<String,Int> = mutableMapOf<String,Int>()): HashtagDB {
-
-    //todo: set limiter
-    var i =PLACELIMIT
-
-    //i dont really care about these credentials
-    val client = PenicillinClient {
-        account {
-            application("bmwANB88eRfRYmfcbQrpI4El7", "xKX4kfE89r3FPJKJf361RYB1W7gInRMVdcWmdDOws2Dy68obtr")
-            token("1111216607672651778-WAtxXGQunaCt9Fcyl5DM1SsGOaNguB", "wS4oTXq4gxnMDgpwt6ShAbalke0OiRog6MoII9pAApN4f")
-        }
-    }
-    //todo - cleanup
-    client.trends.availableAreas().await()
-        .filter { trendArea -> trendArea.placeType.name=="Supername"||trendArea.placeType.name=="Country"   }
-        .forEach { trendArea ->
-        if(i>0) {
-            i--
-            println(trendArea.name)
-            println(trendArea.toString())
-            var code = trendArea.woeid
-            var added = false
-            while (!added)
-                try {
-                    client.trends.place(code.toLong()).await()
-                        .forEach { trendPlace ->
-
-                            trendPlace.trends.filter { trend -> trend.name.startsWith("#") }
-                                .forEach { trend ->
-                                    trends.compute(trend.name) { key, value ->
-                                        //reqiured due to bugged library
-                                        var num = trend.json.get("tweet_volume").primitive.intOrNull ?: BASELINE
-                                        value?.plus(num)?:num
-
-                                    }
-                                }
-                        }
-                    added = true
-                } catch (e: PenicillinException) {
-                    println("$e waiting a little")
-                    Thread.sleep(60000)
-
-
-                }
-        }
-    }
-    client.close()
-
-
-    var list = trends.map { entry-> (entry.key to entry.value) }.sortedBy { pair -> -pair.second }
-
-
-    //build jsonFile and persist it
-    var DB = getHashtagDB(list)
-    saveFile(DB)
-
-    return DB;
+    //get Updated database
+    return updater.updateDB(map)
 }
 
 fun saveFile(hashtags: HashtagDB) {
 
-    var output = File(FILE)
+    var output = File(settings.FILE)
     output.writeText(hashtags.toJsonString())
 }
 
+data class Settings(override val json:JsonObject) : JsonModel{
+    val FILE  by string
+    val TIMELIMIT by int
+    val timeout by long
+    val BASELINE by int
+    val PLACELIMIT by int
+    val consumerKey by string
+    val consumerPrivate by string
+    val accessToken by string
+    val accessTokenSecret by string
+    val types by stringList
+}
 
-data class StateCounter(var nextStateCount:MutableMap<Char,Int> = mutableMapOf<Char,Int>()){
-    val nextState by lazy{
-        updatedState()
+var settings:Settings = {
+    val file = File("settings.json")
+    //if file exists and can be read
+    if(file.exists() && file.canRead() ){
+         file.parse<Settings>()
     }
-
-    fun updatedState(): Map<Char, Double> {
-        val count = nextStateCount.values.fold(0){ a, b-> a+b}
-        var sum:Double =0.0
-        println("update map: $count")
-        val map:MutableMap<Char,Double> =  nextStateCount.mapValues { entry -> entry.value.toDouble()/count.toDouble() }
-            .toSortedMap(
-            kotlin.Comparator {
-                    a:Char,b:Char->
-                (nextStateCount[a]?:0).compareTo(nextStateCount[b]?:0).let { if(it==0) a.compareTo(b) else it}
-            }
-        )
-        println("values: ${nextStateCount}")
-        println("values: ${map}")
-        map.mapValuesTo(map){entry -> sum+=entry.value;sum}
-        println("values: ${map}")
-        return map
+    else{
+        //save default config
+        val  set1 = Settings(jsonObjectOf(
+            "FILE" to "hashtags.json",
+            "TIMELIMIT" to 10*60*1_000,
+            "timeout" to 60*1_000,
+            "BASELINE" to 5_000,
+            "PLACELIMIT" to 25,
+            "consumerKey" to "",
+            "consumerPrivate" to "",
+            "accessToken" to "",
+            "accessTokenSecret" to "",
+            "types" to setOf("Country","Supername")
+        ))
+        file.writeText(set1.toJsonString())
+         set1
     }
+}()
 
-    fun addTo(key:Char, value:Int){
-        nextStateCount.compute(key){_,v->(v?:0)+value}
-    }
-}
-data class StateMap(var statemap:MutableMap<String,StateCounter> = mutableMapOf(),
-                    var begginings:MutableList<Pair<String,Int>> = mutableListOf()){
-
-}
-
-/*
-
-
-n=3
-[ccc]{
-# : 0.1 // start/end
-a : 0.2 // cca state
-b : 0.3
-c : 0.4
-...
-Z : 0.99<1.0
-}
-
-
-*/
-
-fun getNext(stateMap:StateMap,key:String):Char?{
-    val nextState: Map<Char, Double> = stateMap.statemap[key]?.nextState ?: return null
-    var r = random()
-
-    val restmap = nextState.filterValues { p->p>r }.values
-    r= restmap.max()!!
-    if(nextState.values.contains(0.0))
-        println(nextState)
-    return nextState.filterValues { p->p==r }.keys.toList()[0]
-}
 suspend fun main(args: Array<out String>){
-//    var resp =(get("https://api.twitter.com/1.1/trends/place.json",params = mapOf("id" to "1")).text);
-    // Creates new ApiClient
 
-    //        "${yestrday.year}-${yestrday.month.value.f}-${yestrday.dayOfMonth}"yestrday.year
+    println("Settings:")
+    println(settings)
 
+    val client = TwitterDBUpdater(
+        settings.consumerKey,
+        settings.consumerPrivate,
+        settings.accessToken,
+        settings.accessTokenSecret)
+    client.timeout = settings.timeout
+    client.placeLimit = settings.PLACELIMIT
+    client.types = settings.types.toSet()
+    println("Loading/Creating Database")
+    //load Files
+    val db = loadFile(client)
+    println("cleaningUp Connection")
+    //cleanup client
+    client.close()
+    //persist File
+    saveFile(db)
 
-    // Disposes ApiClient
-    var db = loadFile()
 
     val n = 3
     println(db)
     println(db.date)
     println(db.json)
-    println(db.hashtag_fix)
+    println(db.hashtagFix)
     var map:StateMap= StateMap();
-    db.hashtag_fix.forEach{
+    db.hashtagFix.forEach{
         var v = it.volume
         if(v>30_000)
             v=30_000
