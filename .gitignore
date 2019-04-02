@@ -4,3 +4,4 @@ target
 hashtags.json
 keys
 settings.json
+*.json

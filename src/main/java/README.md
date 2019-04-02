@@ -5,12 +5,12 @@ I plan to use twitter api to download trending hashtags and use them to create a
 
 plan 
 +[x] get data from twitter api 
-+[ ] cleanup this process
++[X] cleanup this process
   +[x] make client secrets private
-  +[ ] externalise constatnts
+  +[x] externalise constatnts
   +[x] seperate connection ito separate file + object
 +[x] persist data from twitter
 +[X] use data to create a markov chain
-+[ ] persist the model
++[x] persist the model
 +[ ] create an interface to run the program 
-+[ ] settings.json
++[x] settings.json

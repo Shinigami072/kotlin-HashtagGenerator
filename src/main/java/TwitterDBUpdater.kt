@@ -60,7 +60,7 @@ class TwitterDBUpdater(
                                     //adding/updating the count of hash-tag
                                     .forEach { trend -> trends.compute(trend.name) { _, value ->
                                             //required to do this manually due to bugged json library
-                                            val num = trend.json["tweet_volume"].primitive.intOrNull ?: settings.BASELINE
+                                        val num = trend.json["tweet_volume"].primitive.intOrNull ?: settings.baseLine
                                             //increasing the count
                                             //todo: investigate
                                         value?.plus(num) ?: num
@@ -69,7 +69,7 @@ class TwitterDBUpdater(
                             }
                         added = true
                     } catch (e: PenicillinException) {
-                        println("$e waiting ${timeout}ms")
+                        println("${e.error} waiting ${timeout}ms")
                         Thread.sleep(timeout)
 
 
